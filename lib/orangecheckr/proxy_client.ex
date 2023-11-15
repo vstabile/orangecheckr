@@ -31,7 +31,7 @@ defmodule OrangeCheckr.ProxyClient do
     end
   end
 
-  @spec handle_message(t(), term()) :: {:ok, t()} | {:close} | {:error, atom()}
+  @spec handle_message(t(), term()) :: {:ok, t()} | {:close, t()} | {:error, atom()}
   def handle_message(state, message) do
     case Mint.WebSocket.stream(state.conn, message) do
       {:ok, conn, responses} ->
@@ -135,7 +135,7 @@ defmodule OrangeCheckr.ProxyClient do
 
   def close(state) do
     _ = send_frame(state, :close)
-    Mint.HTTP.close(state.conn)
-    {:close}
+    {:ok, conn} = Mint.HTTP.close(state.conn)
+    {:close, put_in(state.conn, conn)}
   end
 end

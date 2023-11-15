@@ -5,6 +5,8 @@ defmodule Orangecheckr.ConnectivityTest do
   @proxy_url "http://localhost:#{@proxy_port}"
 
   setup_all do
+    {:ok, registry} = Registry.start_link(keys: :unique, name: TestRegistry)
+
     {:ok, relay} = Bandit.start_link(plug: TestRelay, port: 0)
 
     Application.stop(:orangecheckr)
@@ -12,6 +14,7 @@ defmodule Orangecheckr.ConnectivityTest do
     Application.ensure_started(:orangecheckr)
 
     on_exit(fn ->
+      Process.exit(registry, :normal)
       TestRelay.stop(relay)
     end)
 
@@ -58,5 +61,28 @@ defmodule Orangecheckr.ConnectivityTest do
     {:ok, message} = TestClient.receive_message(client)
 
     assert message == File.read!("test/fixtures/subscription_response.json")
+  end
+
+  test "relay closing the connection" do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    TestClient.send_message(client, ~s(["TEST", "close", "normal"]))
+
+    assert_receive {:relay_closed, :normal}, 100
+    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
+  end
+
+  test "client closing the connection" do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    # wait the proxy to connect to the relay
+    Process.sleep(100)
+
+    TestClient.close(client)
+
+    assert_receive {:client_closed, {:local, :normal}}, 100
+    assert_receive {:relay_closed, :remote}, 100
   end
 end

@@ -27,6 +27,10 @@ defmodule TestClient do
     end
   end
 
+  def close(client) do
+    WebSockex.cast(client, :close)
+  end
+
   def handle_connect(conn, state) do
     {:ok, Map.put(state, :conn, conn)}
   end
@@ -40,9 +44,17 @@ defmodule TestClient do
     {:ok, state}
   end
 
+  def handle_cast(:close, state) do
+    {:close, state}
+  end
+
   def handle_frame({:text, message}, %{caller: caller} = state) do
     send(caller, {:websocket, self(), message})
 
     {:ok, state}
+  end
+
+  def terminate(reason, state) do
+    send(state[:caller], {:client_closed, reason})
   end
 end

@@ -42,15 +42,13 @@ defmodule OrangeCheckr.ProxySocket do
   def handle_info(message, state) do
     case ProxyClient.handle_message(state.client, message) do
       {:ok, %{text: text} = client} when text != nil ->
-        state = %{state | client: client}
-        {:push, {:text, text}, state}
+        {:push, {:text, text}, put_in(state.client, client)}
 
       {:ok, client} ->
-        state = %{state | client: client}
-        {:ok, state}
+        {:ok, put_in(state.client, client)}
 
-      {:close} ->
-        {:stop, :normal, state}
+      {:close, client} ->
+        {:stop, :normal, put_in(state.client, client)}
 
       {:error, reason} ->
         IO.inspect({:error, reason})
@@ -58,11 +56,11 @@ defmodule OrangeCheckr.ProxySocket do
     end
   end
 
-  def terminate(reason, state) do
-    IO.inspect({:terminate, reason})
+  def terminate(_reason, %__MODULE__{client: %{websocket: websocket, conn: %{state: state}}})
+      when websocket == nil or state == :closed do
+  end
 
-    if state.client != nil && state.client.websocket != nil do
-      ProxyClient.close(state.client)
-    end
+  def terminate(_reason, %__MODULE__{client: client}) do
+    ProxyClient.close(client)
   end
 end

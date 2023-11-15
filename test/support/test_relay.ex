@@ -42,14 +42,14 @@ defmodule TestRelay do
   end
 
   def url(pid, scheme \\ :ws) do
-    {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
+    {:ok, {_host, port}} = ThousandIsland.listener_info(pid)
     "#{scheme}://localhost:#{port}/"
   end
 end
 
 defmodule TestSocket do
-  def init(_options) do
-    {:ok, []}
+  def init(state) do
+    {:ok, state}
   end
 
   def handle_in({data, [opcode: :text]}, state) do
@@ -65,9 +65,19 @@ defmodule TestSocket do
       {:ok, ["CLOSE", _]} ->
         {:ok, state}
 
+      {:ok, ["TEST", "close", reason]} ->
+        {:stop, String.to_atom(reason), state}
+
       {:error, _} ->
         message = ["NOTICE", "Invalid JSON"] |> Jason.encode!()
         {:push, {:text, message}, state}
+    end
+  end
+
+  def terminate(reason, _state) do
+    case Registry.lookup(TestRegistry, :test) do
+      [{test, _}] -> send(test, {:relay_closed, reason})
+      _ -> :ok
     end
   end
 end
