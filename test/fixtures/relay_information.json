@@ -1,0 +1,44 @@
+{
+    "name": "nostream.your-domain.com",
+    "description": "A nostr relay written in Typescript.",
+    "pubkey": "replace-with-your-pubkey-in-hex",
+    "contact": "mailto:operator@your-domain.com",
+    "supported_nips": [
+        1,
+        2,
+        4,
+        9,
+        11,
+        12,
+        15,
+        16,
+        20,
+        22,
+        26,
+        28,
+        33,
+        40
+    ],
+    "supported_nip_extensions": [
+        "11a"
+    ],
+    "software": "git+https://github.com/Cameri/nostream.git",
+    "version": "1.25.2",
+    "limitation": {
+        "max_message_length": 524288,
+        "max_subscriptions": 10,
+        "max_filters": 2500,
+        "max_limit": 5000,
+        "max_subid_length": 256,
+        "min_prefix": 4,
+        "max_event_tags": 2500,
+        "max_content_length": 102400,
+        "min_pow_difficulty": 0,
+        "auth_required": false,
+        "payment_required": false
+    },
+    "payments_url": "https://nostream.your-domain.com/invoices",
+    "fees": {
+        "admission": []
+    }
+}

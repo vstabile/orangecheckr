@@ -7,7 +7,8 @@ defmodule Orangecheckr.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
 
@@ -22,12 +23,16 @@ defmodule Orangecheckr.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:bandit, "~> 0.6"},
+      {:bandit, "~> 1.1"},
       {:plug, "~> 1.15"},
       {:httpoison, "~> 2.2"},
       {:websock_adapter, "~> 0.5.5"},
       {:mint_web_socket, "~> 1.0"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:websockex, "~> 0.4.3", only: :test}
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 end

@@ -17,8 +17,8 @@ defmodule OrangeCheckr.ProxyClient do
 
   @spec connect(http_scheme(), ws_scheme(), String.t(), :inet.port_number(), String.t()) ::
           {:ok, t()} | {:error, term()}
-  def connect(http_scheme, ws_scheme, address, port, path) do
-    with {:ok, conn} <- Mint.HTTP.connect(http_scheme, address, port),
+  def connect(http_scheme, ws_scheme, host, port, path) do
+    with {:ok, conn} <- Mint.HTTP.connect(http_scheme, host, port),
          {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, []) do
       state = %__MODULE__{conn: conn, request_ref: ref, closing?: false}
       {:ok, state}
@@ -51,7 +51,7 @@ defmodule OrangeCheckr.ProxyClient do
     send_frame(state, {:text, data})
   end
 
-  defp send_frame(state, frame) do
+  def send_frame(state, frame) do
     with {:ok, websocket, data} <- Mint.WebSocket.encode(state.websocket, frame),
          state = put_in(state.websocket, websocket),
          {:ok, conn} <- Mint.WebSocket.stream_request_body(state.conn, state.request_ref, data) do
@@ -122,16 +122,13 @@ defmodule OrangeCheckr.ProxyClient do
         {:ok, state} = send_frame(state, {:pong, data})
         state
 
-      {:close, _code, reason}, state ->
-        Logger.debug("Closing connection: #{inspect(reason)}")
+      {:close, _code, _reason}, state ->
         %{state | closing?: true}
 
       {:text, text}, state ->
-        Logger.debug("Received: #{inspect(text)}")
         %{state | text: text}
 
-      frame, state ->
-        Logger.debug("Unexpected frame received: #{inspect(frame)}")
+      _frame, state ->
         state
     end)
   end

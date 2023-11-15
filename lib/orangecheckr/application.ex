@@ -3,8 +3,10 @@ defmodule OrangeCheckr.Application do
 
   @impl true
   def start(_type, _args) do
+    port = Application.get_env(:orangecheckr, :proxy_port)
+
     children = [
-      {Bandit, scheme: :http, plug: OrangeCheckr.Proxy, port: 4000}
+      {Bandit, scheme: :http, plug: OrangeCheckr.ProxyServer, port: port}
     ]
 
     opts = [strategy: :one_for_one, name: OrangeCheckr.Supervisor]
