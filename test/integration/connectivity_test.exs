@@ -54,8 +54,52 @@ defmodule Orangecheckr.ConnectivityTest do
     assert accepted
   end
 
+  test "proxy sends an authentication request" do
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    {:ok, message} = TestClient.receive_message(client)
+    [type, challenge] = Jason.decode!(message)
+
+    assert type == "AUTH"
+    assert is_binary(challenge)
+  end
+
+  test "client authenticates" do
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    {:ok, message} = TestClient.authenticate(client)
+
+    assert message == ~s(["NOTICE", "Authenticated"])
+  end
+
+  test "client pings the relay" do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    TestClient.ignore_authentication(client)
+
+    client |> TestClient.ping("test")
+
+    assert_receive :relay_ping_received, 100
+    assert TestClient.pong_received?(client, "test")
+  end
+
+  test "relay pings the client" do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    TestClient.authenticate(client)
+
+    TestClient.send_message(client, ~s(["TEST", "ping", "test"]))
+
+    assert TestClient.ping_received?(client, "test")
+    assert_receive :relay_pong_received, 100
+  end
+
   test "subscribe to events" do
     {:ok, client} = TestClient.start(@proxy_url)
+
+    TestClient.authenticate(client)
 
     TestClient.send_message(client, ~s(["REQ", "subscriptio-id", {}]))
     {:ok, message} = TestClient.receive_message(client)
@@ -63,26 +107,25 @@ defmodule Orangecheckr.ConnectivityTest do
     assert message == File.read!("test/fixtures/subscription_response.json")
   end
 
-  test "relay closing the connection" do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
-    {:ok, client} = TestClient.start(@proxy_url)
-
-    TestClient.send_message(client, ~s(["TEST", "close", "normal"]))
-
-    assert_receive {:relay_closed, :normal}, 100
-    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
-  end
-
   test "client closing the connection" do
     {:ok, _} = Registry.register(TestRegistry, :test, self())
     {:ok, client} = TestClient.start(@proxy_url)
-
-    # wait the proxy to connect to the relay
-    Process.sleep(100)
 
     TestClient.close(client)
 
     assert_receive {:client_closed, {:local, :normal}}, 100
     assert_receive {:relay_closed, :remote}, 100
+  end
+
+  test "relay closing the connection" do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    TestClient.authenticate(client)
+
+    TestClient.send_message(client, ~s(["TEST", "close", "normal"]))
+
+    assert_receive {:relay_closed, :normal}, 100
+    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
   end
 end

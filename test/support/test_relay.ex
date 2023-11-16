@@ -52,8 +52,8 @@ defmodule TestSocket do
     {:ok, state}
   end
 
-  def handle_in({data, [opcode: :text]}, state) do
-    case Jason.decode(data) do
+  def handle_in({text, [opcode: :text]}, state) do
+    case Jason.decode(text) do
       {:ok, ["REQ", _, _]} ->
         response = File.read!("test/fixtures/subscription_response.json")
         {:push, {:text, response}, state}
@@ -65,19 +65,34 @@ defmodule TestSocket do
       {:ok, ["CLOSE", _]} ->
         {:ok, state}
 
+      {:ok, ["TEST", "ping", payload]} ->
+        {:push, {:ping, payload}, state}
+
       {:ok, ["TEST", "close", reason]} ->
         {:stop, String.to_atom(reason), state}
 
       {:error, _} ->
-        message = ["NOTICE", "Invalid JSON"] |> Jason.encode!()
+        message = ~s(["NOTICE", "Invalid JSON"])
         {:push, {:text, message}, state}
     end
+  end
+
+  def handle_control(frame, state) do
+    case Registry.lookup(TestRegistry, :test) do
+      [{test, _}] ->
+        case frame do
+          {_, [opcode: :ping]} -> send(test, :relay_ping_received)
+          {_, [opcode: :pong]} -> send(test, :relay_pong_received)
+          _ -> :ok
+        end
+    end
+
+    {:ok, state}
   end
 
   def terminate(reason, _state) do
     case Registry.lookup(TestRegistry, :test) do
       [{test, _}] -> send(test, {:relay_closed, reason})
-      _ -> :ok
     end
   end
 end

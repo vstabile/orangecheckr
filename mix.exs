@@ -29,6 +29,8 @@ defmodule Orangecheckr.MixProject do
       {:websock_adapter, "~> 0.5.5"},
       {:mint_web_socket, "~> 1.0"},
       {:jason, "~> 1.4"},
+      {:elixir_uuid, "~> 1.2"},
+      {:nostr_basics, "~> 0.1.6"},
       {:websockex, "~> 0.4.3", only: :test}
     ]
   end

@@ -1,6 +1,8 @@
 defmodule OrangeCheckr.ProxyClient do
   require Logger
 
+  @type frame :: Mint.WebSocket.frame() | Mint.WebSocket.short_hand_frame()
+
   @type t :: %__MODULE__{
           conn: Mint.HTTP.t(),
           websocket: Mint.WebSocket.t() | nil,
@@ -8,12 +10,20 @@ defmodule OrangeCheckr.ProxyClient do
           status: Mint.Types.status() | nil,
           resp_headers: Mint.Types.headers() | nil,
           closing?: boolean(),
-          text: String.t() | nil
+          frame: frame() | nil
         }
   @type http_scheme :: :http | :https
   @type ws_scheme :: :ws | :wss
 
-  defstruct [:conn, :websocket, :request_ref, :status, :resp_headers, :closing?, :text]
+  defstruct [
+    :conn,
+    :websocket,
+    :request_ref,
+    :status,
+    :resp_headers,
+    :closing?,
+    :frame
+  ]
 
   @spec connect(http_scheme(), ws_scheme(), String.t(), :inet.port_number(), String.t()) ::
           {:ok, t()} | {:error, term()}
@@ -35,7 +45,9 @@ defmodule OrangeCheckr.ProxyClient do
   def handle_message(state, message) do
     case Mint.WebSocket.stream(state.conn, message) do
       {:ok, conn, responses} ->
-        state = %{state | conn: conn, text: nil} |> handle_responses(responses)
+        state =
+          %{state | conn: conn, frame: nil} |> handle_responses(responses)
+
         if state.closing?, do: close(state), else: {:ok, state}
 
       {:error, _conn, reason, _responses} ->
@@ -46,11 +58,8 @@ defmodule OrangeCheckr.ProxyClient do
     end
   end
 
-  @spec send_text(t(), String.t()) :: {:ok, t()} | {:error, t(), any()}
-  def send_text(state, data) do
-    send_frame(state, {:text, data})
-  end
-
+  @spec send_frame(t(), frame()) ::
+          {:ok, t()} | {:error, t(), any()}
   def send_frame(state, frame) do
     with {:ok, websocket, data} <- Mint.WebSocket.encode(state.websocket, frame),
          state = put_in(state.websocket, websocket),
@@ -117,19 +126,11 @@ defmodule OrangeCheckr.ProxyClient do
 
   def handle_frames(state, frames) do
     Enum.reduce(frames, state, fn
-      # reply to pings with pongs
-      {:ping, data}, state ->
-        {:ok, state} = send_frame(state, {:pong, data})
-        state
+      {:close, _code, _reason} = frame, state ->
+        %{state | closing?: true, frame: frame}
 
-      {:close, _code, _reason}, state ->
-        %{state | closing?: true}
-
-      {:text, text}, state ->
-        %{state | text: text}
-
-      _frame, state ->
-        state
+      frame, state ->
+        %{state | frame: frame}
     end)
   end
 
