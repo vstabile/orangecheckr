@@ -1,4 +1,6 @@
 defmodule OrangeCheckr.ProxyClient do
+  alias OrangeCheckr.Types
+  alias Orangecheckr.Utils
   require Logger
 
   @type frame :: Mint.WebSocket.frame() | Mint.WebSocket.short_hand_frame()
@@ -10,10 +12,9 @@ defmodule OrangeCheckr.ProxyClient do
           status: Mint.Types.status() | nil,
           resp_headers: Mint.Types.headers() | nil,
           closing?: boolean(),
+          close_code: integer() | nil,
           frame: frame() | nil
         }
-  @type http_scheme :: :http | :https
-  @type ws_scheme :: :ws | :wss
 
   defstruct [
     :conn,
@@ -22,14 +23,16 @@ defmodule OrangeCheckr.ProxyClient do
     :status,
     :resp_headers,
     :closing?,
+    :close_code,
     :frame
   ]
 
-  @spec connect(http_scheme(), ws_scheme(), String.t(), :inet.port_number(), String.t()) ::
-          {:ok, t()} | {:error, term()}
-  def connect(http_scheme, ws_scheme, host, port, path) do
-    with {:ok, conn} <- Mint.HTTP.connect(http_scheme, host, port),
-         {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, []) do
+  @spec connect(Types.relay_uri()) :: {:ok, t()} | {:error, term()}
+  def connect(uri) do
+    http_scheme = Utils.ws_to_http_scheme(uri.scheme)
+
+    with {:ok, conn} <- Mint.HTTP.connect(http_scheme, uri.host, uri.port),
+         {:ok, conn, ref} <- Mint.WebSocket.upgrade(uri.scheme, conn, uri.path, []) do
       state = %__MODULE__{conn: conn, request_ref: ref, closing?: false}
       {:ok, state}
     else
@@ -41,13 +44,12 @@ defmodule OrangeCheckr.ProxyClient do
     end
   end
 
-  @spec handle_message(t(), term()) :: {:ok, t()} | {:close, t()} | {:error, atom()}
+  @spec handle_message(t(), term()) ::
+          {:ok, t()} | {:close, integer(), t()} | {:error, atom()}
   def handle_message(state, message) do
     case Mint.WebSocket.stream(state.conn, message) do
       {:ok, conn, responses} ->
-        state =
-          %{state | conn: conn, frame: nil} |> handle_responses(responses)
-
+        state = %{state | conn: conn, frame: nil} |> handle_responses(responses)
         if state.closing?, do: close(state), else: {:ok, state}
 
       {:error, _conn, reason, _responses} ->
@@ -126,17 +128,30 @@ defmodule OrangeCheckr.ProxyClient do
 
   def handle_frames(state, frames) do
     Enum.reduce(frames, state, fn
-      {:close, _code, _reason} = frame, state ->
-        %{state | closing?: true, frame: frame}
+      {:close, code, _reason} = frame, state ->
+        %{state | closing?: true, close_code: code, frame: frame}
 
       frame, state ->
         %{state | frame: frame}
     end)
   end
 
-  def close(state) do
+  # When connection is already closed
+  def close(%{conn: %{state: :closed} = conn} = state) do
+    {:close, state.close_code, put_in(state.conn, conn)}
+  end
+
+  # When no close frame has been receieved
+  def close(%{close_code: nil, conn: conn} = state) do
     _ = send_frame(state, :close)
-    {:ok, conn} = Mint.HTTP.close(state.conn)
-    {:close, put_in(state.conn, conn)}
+    {:ok, conn} = Mint.HTTP.close(conn)
+    {:close, 1006, put_in(state.conn, conn)}
+  end
+
+  def close(%{conn: conn} = state) do
+    # May fail if the relay has already closed
+    _ = send_frame(state, :close)
+    {:ok, conn} = Mint.HTTP.close(conn)
+    {:close, state.close_code, put_in(state.conn, conn)}
   end
 end

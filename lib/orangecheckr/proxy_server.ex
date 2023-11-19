@@ -1,45 +1,40 @@
 defmodule OrangeCheckr.ProxyServer do
   import Plug.Conn
+  alias Orangecheckr.Utils
   alias OrangeCheckr.ProxySocket
+  alias OrangeCheckr.Types
 
+  @spec init(any()) :: Types.relay_uri()
   def init(_options) do
-    relay_uri = Application.get_env(:orangecheckr, :relay_uri)
-    %{scheme: scheme, host: host, port: port, path: path} = URI.parse(relay_uri)
-
-    {http_scheme, ws_scheme} =
-      case scheme do
-        "http" -> {:http, :ws}
-        "ws" -> {:http, :ws}
-        "https" -> {:https, :wss}
-        "wss" -> {:https, :wss}
-        _ -> raise "Invalid scheme: #{inspect(scheme)}"
-      end
-
-    [http_scheme: http_scheme, ws_scheme: ws_scheme, host: host, port: port, path: path || "/"]
+    Application.get_env(:orangecheckr, :relay_uri)
+    |> URI.parse()
+    |> Map.from_struct()
+    |> Map.drop([:authority, :query, :fragment, :userinfo])
+    |> Map.update(:scheme, :wss, &String.to_atom/1)
+    |> Map.update(:path, "/", fn path -> path || "/" end)
   end
 
-  def call(conn, options) do
+  def call(conn, uri) do
     case get_req_header(conn, "upgrade") do
       ["websocket" | _] ->
-        upgrade(conn, options)
+        upgrade(conn, uri)
 
       _ ->
-        bypass(conn, options)
+        http(conn, uri)
     end
   end
 
-  defp upgrade(conn, options) do
+  defp upgrade(conn, uri) do
     conn
-    |> WebSockAdapter.upgrade(ProxySocket, options, [])
+    |> WebSockAdapter.upgrade(ProxySocket, uri, [])
     |> halt()
   end
 
-  defp bypass(conn, options) do
-    target_url =
-      to_string(options[:http_scheme]) <>
-        "://" <> options[:host] <> ":" <> to_string(options[:port]) <> conn.request_path
+  defp http(conn, uri) do
+    http_scheme = Utils.ws_to_http_scheme(uri.scheme)
+    http_url = "#{http_scheme}://#{uri.host}:#{uri.port}#{conn.request_path}"
 
-    case HTTPoison.get(target_url, conn.req_headers) do
+    case HTTPoison.get(http_url, conn.req_headers) do
       {:ok, %HTTPoison.Response{status_code: status_code, body: body, headers: headers}} ->
         conn
         |> put_resp_content_type(get_resp_content_type(headers))

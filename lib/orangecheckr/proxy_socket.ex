@@ -1,32 +1,45 @@
 defmodule OrangeCheckr.ProxySocket do
+  alias OrangeCheckr.Types
   alias NostrBasics.Event
   alias OrangeCheckr.ProxyClient
 
-  defstruct [:host, :client, :auth?, :challenge]
+  defstruct [:relay_uri, :client, :auth?, :challenge]
 
-  @spec init([any()]) :: {:ok, ProxyClient.t()} | {:stop, {:error, term()}}
-  def init(
-        http_scheme: http_scheme,
-        ws_scheme: ws_scheme,
-        host: host,
-        port: port,
-        path: path
-      ) do
-    case ProxyClient.connect(http_scheme, ws_scheme, host, port, path) do
+  @closing_relay_connection_timeout 1000
+
+  @spec init(Types.relay_uri()) ::
+          {:push, {:text, String.t()}, ProxyClient.t()} | {:stop, {:error, term()}}
+  def init(relay_uri) do
+    state = %__MODULE__{
+      relay_uri: relay_uri,
+      auth?: false,
+      challenge: UUID.uuid4()
+    }
+
+    connect_to_relay(state)
+  end
+
+  def connect_to_relay(state) do
+    case ProxyClient.connect(state.relay_uri) do
       {:ok, client} ->
-        challenge = UUID.uuid4()
-        state = %__MODULE__{host: host, client: client, auth?: false, challenge: challenge}
-        {:push, {:text, ~s(["AUTH", "#{challenge}"])}, state}
+        state = put_in(state.client, client)
+        maybe_send_authentication_message(state)
 
       {:error, reason} ->
         {:stop, {:error, reason}}
     end
   end
 
+  defp maybe_send_authentication_message(%__MODULE__{auth?: false} = state) do
+    {:push, {:text, ~s(["AUTH", "#{state.challenge}"])}, state}
+  end
+
+  defp maybe_send_authentication_message(state), do: {:ok, state}
+
   def handle_in({text, [opcode: :text]}, %{auth?: false} = state) do
     with {:ok, ["AUTH", raw_event]} <- Jason.decode(text),
          auth_event <- NostrBasics.Event.decode(raw_event),
-         true <- authenticate(auth_event, state.challenge, state.host) do
+         true <- authenticate(auth_event, state) do
       {:push, {:text, ~s(["NOTICE", "Authenticated"])}, put_in(state.auth?, true)}
     else
       {:error, _} ->
@@ -64,8 +77,9 @@ defmodule OrangeCheckr.ProxySocket do
       {:ok, client} ->
         {:ok, put_in(state.client, client)}
 
-      {:close, client} ->
-        {:stop, :normal, put_in(state.client, client)}
+      {:close, code, client} ->
+        state = put_in(state.client, client)
+        reconnect_or_close(code, state)
 
       {:error, reason} ->
         IO.inspect({:error, reason})
@@ -83,7 +97,10 @@ defmodule OrangeCheckr.ProxySocket do
     {:ok, put_in(state.client, client)}
   end
 
-  defp authenticate(%Event{} = event, challenge, host) do
+  defp authenticate(%Event{} = event, state) do
+    challenge = state.challenge
+    host = state.relay_uri.host
+
     with :ok <- NostrBasics.Event.Validator.validate_event(event),
          22242 <- event.kind,
          true <- DateTime.diff(event.created_at, DateTime.utc_now()) |> abs < 10 * 60,
@@ -96,12 +113,17 @@ defmodule OrangeCheckr.ProxySocket do
     end
   end
 
-  def terminate(_reason, %__MODULE__{client: %{websocket: websocket, conn: %{state: state}}})
-      when websocket != nil or state == :closed do
+  def terminate(_reason, %__MODULE__{client: %{conn: %{state: :closed}}}), do: nil
+
+  def terminate(_reason, %__MODULE__{client: client}), do: close_relay_connection(client)
+
+  defp reconnect_or_close(4000, state) do
+    # Do not try to reconnect (NIP-01)
+    {:stop, :normal, 4000, state}
   end
 
-  def terminate(_reason, %__MODULE__{client: client}) do
-    close_relay_connection(client)
+  defp reconnect_or_close(_code, state) do
+    connect_to_relay(state)
   end
 
   defp close_relay_connection(%{websocket: nil} = client) do
@@ -109,8 +131,12 @@ defmodule OrangeCheckr.ProxySocket do
       message ->
         case ProxyClient.handle_message(client, message) do
           {:ok, client} -> close_relay_connection(client)
+          {:close, _code, client} -> close_relay_connection(client)
           _ -> close_relay_connection(client)
         end
+    after
+      @closing_relay_connection_timeout ->
+        IO.inspect("Closing relay connection timeout")
     end
   end
 

@@ -7,18 +7,31 @@ defmodule Orangecheckr.ConnectivityTest do
   setup_all do
     {:ok, registry} = Registry.start_link(keys: :unique, name: TestRegistry)
 
-    {:ok, relay} = Bandit.start_link(plug: TestRelay, port: 0)
+    {:ok, server} = Bandit.start_link(plug: TestRelay, port: 0)
+    Registry.register(TestRegistry, :server, server)
 
     Application.stop(:orangecheckr)
-    Application.put_env(:orangecheckr, :relay_uri, TestRelay.url(relay))
+    Application.put_env(:orangecheckr, :relay_uri, TestRelay.url(server))
     Application.ensure_started(:orangecheckr)
 
     on_exit(fn ->
+      TestRelay.stop(server)
       Process.exit(registry, :normal)
-      TestRelay.stop(relay)
     end)
 
     :ok
+  end
+
+  setup do
+    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, client} = TestClient.start(@proxy_url)
+
+    relay =
+      receive do
+        {:relay_connected, relay} -> relay
+      end
+
+    %{client: client, relay: relay}
   end
 
   test "proxy endpoint without upgrade or accept header" do
@@ -42,8 +55,7 @@ defmodule Orangecheckr.ConnectivityTest do
     assert response.body == "Cannot GET /invalid"
   end
 
-  test "upgrade to websocket" do
-    {:ok, client} = TestClient.start(@proxy_url)
+  test "upgrade to websocket", %{client: client} do
     conn = TestClient.get_conn(client)
 
     accepted =
@@ -54,9 +66,7 @@ defmodule Orangecheckr.ConnectivityTest do
     assert accepted
   end
 
-  test "proxy sends an authentication request" do
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "proxy sends an authentication request", %{client: client} do
     {:ok, message} = TestClient.receive_message(client)
     [type, challenge] = Jason.decode!(message)
 
@@ -64,18 +74,13 @@ defmodule Orangecheckr.ConnectivityTest do
     assert is_binary(challenge)
   end
 
-  test "client authenticates" do
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "client authenticates", %{client: client} do
     {:ok, message} = TestClient.authenticate(client)
 
     assert message == ~s(["NOTICE", "Authenticated"])
   end
 
-  test "client pings the relay" do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "client pings the relay", %{client: client} do
     TestClient.ignore_authentication(client)
 
     client |> TestClient.ping("test")
@@ -84,21 +89,16 @@ defmodule Orangecheckr.ConnectivityTest do
     assert TestClient.pong_received?(client, "test")
   end
 
-  test "relay pings the client" do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "relay pings the client", %{client: client, relay: relay} do
     TestClient.authenticate(client)
 
-    TestClient.send_message(client, ~s(["TEST", "ping", "test"]))
+    send(relay, {:test, :ping, "test"})
 
     assert TestClient.ping_received?(client, "test")
     assert_receive :relay_pong_received, 100
   end
 
-  test "subscribe to events" do
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "subscribe to events", %{client: client} do
     TestClient.authenticate(client)
 
     TestClient.send_message(client, ~s(["REQ", "subscriptio-id", {}]))
@@ -107,25 +107,40 @@ defmodule Orangecheckr.ConnectivityTest do
     assert message == File.read!("test/fixtures/subscription_response.json")
   end
 
-  test "client closing the connection" do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "client closing the connection", %{client: client} do
     TestClient.close(client)
 
     assert_receive {:client_closed, {:local, :normal}}, 100
     assert_receive {:relay_closed, :remote}, 100
   end
 
-  test "relay closing the connection" do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
-    {:ok, client} = TestClient.start(@proxy_url)
-
+  test "proxy closing the connection", %{client: client} do
     TestClient.authenticate(client)
 
-    TestClient.send_message(client, ~s(["TEST", "close", "normal"]))
+    Application.stop(:orangecheckr)
+
+    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
+    assert_receive {:relay_closed, :remote}, 100
+
+    Application.ensure_started(:orangecheckr)
+  end
+
+  test "proxy reconnects after relay closes the connection", %{client: client, relay: relay} do
+    TestClient.authenticate(client)
+
+    send(relay, {:test, :close, 1000, :normal})
 
     assert_receive {:relay_closed, :normal}, 100
-    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
+    refute_receive {:client_closed, _}, 100
+    assert_receive {:relay_connected, _}, 100
+  end
+
+  test "proxy does not reconnect when close status is 4000", %{client: client, relay: relay} do
+    TestClient.authenticate(client)
+
+    send(relay, {:test, :close, 4000, :normal})
+
+    assert_receive {:relay_closed, :normal}, 100
+    assert_receive {:client_closed, {:remote, 4000, ""}}, 100
   end
 end
