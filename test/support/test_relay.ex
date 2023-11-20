@@ -1,4 +1,4 @@
-defmodule TestRelay do
+defmodule OrangeCheckr.TestRelay do
   import Plug.Conn
 
   def init(options), do: options
@@ -38,10 +38,6 @@ defmodule TestRelay do
     |> send_resp(404, "Cannot GET /invalid")
   end
 
-  def stop(pid) do
-    Process.exit(pid, :normal)
-  end
-
   def url(pid, scheme \\ :ws) do
     {:ok, {_host, port}} = ThousandIsland.listener_info(pid)
     "#{scheme}://localhost:#{port}/"
@@ -60,7 +56,7 @@ end
 defmodule TestSocket do
   def init(_state) do
     test =
-      case Registry.lookup(TestRegistry, :test) do
+      case Registry.lookup(OrangeCheckr.TestRegistry, :test) do
         [{test, _}] ->
           # Enable tests to send messages to the socket
           send(test, {:relay_connected, self()})
@@ -105,7 +101,7 @@ defmodule TestSocket do
   end
 
   def terminate(reason, test) do
-    if test, do: send(test, {:relay_closed, reason})
+    send(test, {:relay_closed, reason})
   end
 
   # Process testing commandas

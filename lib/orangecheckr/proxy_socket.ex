@@ -5,10 +5,21 @@ defmodule OrangeCheckr.ProxySocket do
 
   defstruct [:relay_uri, :client, :auth?, :challenge]
 
-  @closing_relay_connection_timeout 1000
+  @type t :: %__MODULE__{
+          relay_uri: Types.relay_uri(),
+          client: ProxyClient.t(),
+          auth?: boolean(),
+          challenge: String.t()
+        }
+
+  @max_retries 7
+  @bad_gateway_code 1014
+  @closing_relay_connection_timeout 100
 
   @spec init(Types.relay_uri()) ::
-          {:push, {:text, String.t()}, ProxyClient.t()} | {:stop, {:error, term()}}
+          {:push, {:text, String.t()}, ProxyClient.t()}
+          | {:ok, t()}
+          | {:stop, term(), integer(), t()}
   def init(relay_uri) do
     state = %__MODULE__{
       relay_uri: relay_uri,
@@ -25,8 +36,8 @@ defmodule OrangeCheckr.ProxySocket do
         state = put_in(state.client, client)
         maybe_send_authentication_message(state)
 
-      {:error, reason} ->
-        {:stop, {:error, reason}}
+      {:error, _reason, client} ->
+        {:stop, :shutdown, @bad_gateway_code, put_in(state.client, client)}
     end
   end
 
@@ -81,18 +92,24 @@ defmodule OrangeCheckr.ProxySocket do
         state = put_in(state.client, client)
         reconnect_or_close(code, state)
 
-      {:error, reason} ->
-        IO.inspect({:error, reason})
-        {:stop, {:error, reason}}
+      {:error, reason, client} ->
+        {:stop, {:error, reason}, @bad_gateway_code, put_in(state.client, client)}
     end
   end
 
-  defp try_send(frame, %__MODULE__{client: %{websocket: nil}} = state) do
-    Process.send_after(self(), {:retry_send, frame}, 10)
+  defp try_send(frame, state, attempt \\ 0)
+
+  defp try_send(_frame, %__MODULE__{client: %{websocket: nil}} = state, attempt)
+       when attempt == @max_retries do
+    {:stop, :normal, @bad_gateway_code, state}
+  end
+
+  defp try_send(frame, %__MODULE__{client: %{websocket: nil}} = state, attempt) do
+    Process.send_after(self(), {:retry_send, frame}, 10 * 2 ** attempt)
     {:ok, state}
   end
 
-  defp try_send(frame, %__MODULE__{client: client} = state) do
+  defp try_send(frame, %__MODULE__{client: client} = state, _attempt) do
     {:ok, client} = ProxyClient.send_frame(client, frame)
     {:ok, put_in(state.client, client)}
   end
@@ -113,6 +130,8 @@ defmodule OrangeCheckr.ProxySocket do
     end
   end
 
+  def terminate(_reason, %__MODULE__{client: %{conn: nil}}), do: nil
+
   def terminate(_reason, %__MODULE__{client: %{conn: %{state: :closed}}}), do: nil
 
   def terminate(_reason, %__MODULE__{client: client}), do: close_relay_connection(client)
@@ -126,17 +145,16 @@ defmodule OrangeCheckr.ProxySocket do
     connect_to_relay(state)
   end
 
-  defp close_relay_connection(%{websocket: nil} = client) do
+  defp close_relay_connection(%{websocket: nil, conn: %{state: :open}} = client) do
     receive do
       message ->
         case ProxyClient.handle_message(client, message) do
           {:ok, client} -> close_relay_connection(client)
-          {:close, _code, client} -> close_relay_connection(client)
           _ -> close_relay_connection(client)
         end
     after
       @closing_relay_connection_timeout ->
-        IO.inspect("Closing relay connection timeout")
+        IO.inspect("Relay connection timed out")
     end
   end
 

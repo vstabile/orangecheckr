@@ -1,4 +1,4 @@
-defmodule TestClient do
+defmodule OrangeCheckr.TestClient do
   use WebSockex
 
   defstruct [:caller, :url, :private_key]

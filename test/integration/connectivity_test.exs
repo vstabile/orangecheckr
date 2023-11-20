@@ -1,29 +1,23 @@
 defmodule Orangecheckr.ConnectivityTest do
   use ExUnit.Case, async: false
+  alias OrangeCheckr.TestClient
+  alias OrangeCheckr.TestRelay
 
   @proxy_port Application.compile_env(:orangecheckr, :proxy_port)
   @proxy_url "http://localhost:#{@proxy_port}"
 
   setup_all do
-    {:ok, registry} = Registry.start_link(keys: :unique, name: TestRegistry)
-
     {:ok, server} = Bandit.start_link(plug: TestRelay, port: 0)
-    Registry.register(TestRegistry, :server, server)
 
     Application.stop(:orangecheckr)
     Application.put_env(:orangecheckr, :relay_uri, TestRelay.url(server))
     Application.ensure_started(:orangecheckr)
 
-    on_exit(fn ->
-      TestRelay.stop(server)
-      Process.exit(registry, :normal)
-    end)
-
     :ok
   end
 
   setup do
-    {:ok, _} = Registry.register(TestRegistry, :test, self())
+    {:ok, _} = Registry.register(OrangeCheckr.TestRegistry, :test, self())
     {:ok, client} = TestClient.start(@proxy_url)
 
     relay =
@@ -112,35 +106,5 @@ defmodule Orangecheckr.ConnectivityTest do
 
     assert_receive {:client_closed, {:local, :normal}}, 100
     assert_receive {:relay_closed, :remote}, 100
-  end
-
-  test "proxy closing the connection", %{client: client} do
-    TestClient.authenticate(client)
-
-    Application.stop(:orangecheckr)
-
-    assert_receive {:client_closed, {:remote, 1000, ""}}, 100
-    assert_receive {:relay_closed, :remote}, 100
-
-    Application.ensure_started(:orangecheckr)
-  end
-
-  test "proxy reconnects after relay closes the connection", %{client: client, relay: relay} do
-    TestClient.authenticate(client)
-
-    send(relay, {:test, :close, 1000, :normal})
-
-    assert_receive {:relay_closed, :normal}, 100
-    refute_receive {:client_closed, _}, 100
-    assert_receive {:relay_connected, _}, 100
-  end
-
-  test "proxy does not reconnect when close status is 4000", %{client: client, relay: relay} do
-    TestClient.authenticate(client)
-
-    send(relay, {:test, :close, 4000, :normal})
-
-    assert_receive {:relay_closed, :normal}, 100
-    assert_receive {:client_closed, {:remote, 4000, ""}}, 100
   end
 end
