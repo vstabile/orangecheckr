@@ -1,26 +1,33 @@
-defmodule OrangeCheckr.TestRelay do
-  import Plug.Conn
+defmodule OrangeCheckr.TestRelayRouter do
+  use Plug.Router
 
-  def init(options), do: options
+  plug(:match)
+  plug(:dispatch)
 
   def call(conn, options) do
-    case get_req_header(conn, "upgrade") do
-      ["websocket" | _] ->
-        ws(conn, options)
+    conn =
+      case get_req_header(conn, "upgrade") do
+        ["websocket" | _] -> assign(conn, :upgrade?, true)
+        _ -> conn
+      end
 
-      _ ->
-        http(conn)
+    super(assign(conn, :options, options), options)
+  end
+
+  get "/" do
+    if conn.assigns[:upgrade?] do
+      conn
+      |> delay(conn.assigns[:options])
+      |> WebSockAdapter.upgrade(TestRelayServer, [], [])
+      |> halt()
+    else
+      handle_http(conn)
     end
   end
 
-  def ws(conn, options) do
-    conn
-    |> delay(options)
-    |> WebSockAdapter.upgrade(TestSocket, [], [])
-    |> halt()
-  end
+  match(_, do: send_resp(conn, 404, "Cannot #{conn.method} #{conn.request_path}"))
 
-  def http(%{method: "GET", request_path: "/"} = conn) do
+  def handle_http(conn) do
     case get_req_header(conn, "accept") do
       ["application/nostr+json"] ->
         conn
@@ -28,32 +35,25 @@ defmodule OrangeCheckr.TestRelay do
         |> send_resp(200, File.read!("test/fixtures/relay_information.json"))
 
       _ ->
-        conn
-        |> send_resp(200, "Please use a Nostr client to connect.")
+        send_resp(conn, 200, "Please use a Nostr client to connect.")
     end
-  end
-
-  def http(conn) do
-    conn
-    |> send_resp(404, "Cannot GET /invalid")
-  end
-
-  def url(pid, scheme \\ :ws) do
-    {:ok, {_host, port}} = ThousandIsland.listener_info(pid)
-    "#{scheme}://localhost:#{port}/"
   end
 
   # Simulate a delay when the proxy is connecting to the relay
   def delay(conn, delay: delay) do
     Process.sleep(delay)
-
     conn
   end
 
   def delay(conn, _), do: conn
+
+  def url(pid, scheme \\ :ws) do
+    {:ok, {_host, port}} = ThousandIsland.listener_info(pid)
+    "#{scheme}://localhost:#{port}/"
+  end
 end
 
-defmodule TestSocket do
+defmodule TestRelayServer do
   def init(_state) do
     test =
       case Registry.lookup(OrangeCheckr.TestRegistry, :test) do

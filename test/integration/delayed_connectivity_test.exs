@@ -1,16 +1,16 @@
 defmodule Orangecheckr.DelayedConnectivityTest do
   use ExUnit.Case, async: false
   alias OrangeCheckr.TestClient
-  alias OrangeCheckr.TestRelay
+  alias OrangeCheckr.TestRelayRouter
 
   @proxy_port Application.compile_env(:orangecheckr, :proxy_port)
   @proxy_url "http://localhost:#{@proxy_port}"
 
   setup_all do
-    {:ok, server} = Bandit.start_link(plug: {TestRelay, [delay: 50]}, port: 0)
+    {:ok, server} = Bandit.start_link(plug: {TestRelayRouter, [delay: 50]}, port: 0)
 
     Application.stop(:orangecheckr)
-    Application.put_env(:orangecheckr, :relay_uri, TestRelay.url(server))
+    Application.put_env(:orangecheckr, :relay_uri, TestRelayRouter.url(server))
     Application.ensure_started(:orangecheckr)
 
     :ok
