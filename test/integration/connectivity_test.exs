@@ -1,16 +1,16 @@
 defmodule Orangecheckr.ConnectivityTest do
   use ExUnit.Case, async: false
   alias OrangeCheckr.TestClient
-  alias OrangeCheckr.TestRelayRouter
+  alias OrangeCheckr.TestRelay
 
   @proxy_port Application.compile_env(:orangecheckr, :proxy_port)
   @proxy_url "http://localhost:#{@proxy_port}"
 
   setup_all do
-    {:ok, server} = Bandit.start_link(plug: TestRelayRouter, port: 0)
+    {:ok, server} = Bandit.start_link(plug: TestRelay.Router, port: 0)
 
     Application.stop(:orangecheckr)
-    Application.put_env(:orangecheckr, :relay_uri, TestRelayRouter.url(server))
+    Application.put_env(:orangecheckr, :relay_uri, TestRelay.Router.url(server))
     Application.ensure_started(:orangecheckr)
 
     :ok
@@ -46,7 +46,7 @@ defmodule Orangecheckr.ConnectivityTest do
     {:ok, response} = (@proxy_url <> "/invalid") |> HTTPoison.get()
 
     assert response.status_code == 404
-    assert response.body == "Cannot GET /invalid"
+    assert response.body == "Not found. Relay path is /"
   end
 
   test "upgrade to websocket", %{client: client} do

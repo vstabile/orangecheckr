@@ -1,31 +1,26 @@
-defmodule OrangeCheckr.TestRelayRouter do
-  use Plug.Router
+defmodule OrangeCheckr.TestRelay.Router do
+  import Plug.Conn
 
-  plug(:match)
-  plug(:dispatch)
+  def init(options), do: options
 
-  def call(conn, options) do
-    conn =
-      case get_req_header(conn, "upgrade") do
-        ["websocket" | _] -> assign(conn, :upgrade?, true)
-        _ -> conn
-      end
+  def call(%{request_path: "/"} = conn, options) do
+    case get_req_header(conn, "upgrade") do
+      ["websocket" | _] ->
+        upgrade(conn, options)
 
-    super(assign(conn, :options, options), options)
-  end
-
-  get "/" do
-    if conn.assigns[:upgrade?] do
-      conn
-      |> delay(conn.assigns[:options])
-      |> WebSockAdapter.upgrade(TestRelayServer, [], [])
-      |> halt()
-    else
-      handle_http(conn)
+      _ ->
+        handle_http(conn)
     end
   end
 
-  match(_, do: send_resp(conn, 404, "Cannot #{conn.method} #{conn.request_path}"))
+  def call(conn, _), do: send_resp(conn, 404, "Not found.")
+
+  def upgrade(conn, options) do
+    conn
+    |> delay(options)
+    |> WebSockAdapter.upgrade(TestRelay.Server, [], [])
+    |> halt()
+  end
 
   def handle_http(conn) do
     case get_req_header(conn, "accept") do
@@ -53,7 +48,7 @@ defmodule OrangeCheckr.TestRelayRouter do
   end
 end
 
-defmodule TestRelayServer do
+defmodule TestRelay.Server do
   def init(_state) do
     test =
       case Registry.lookup(OrangeCheckr.TestRegistry, :test) do

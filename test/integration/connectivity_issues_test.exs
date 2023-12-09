@@ -1,7 +1,7 @@
 defmodule Orangecheckr.ConnectivityIssuesTest do
   use ExUnit.Case
   alias OrangeCheckr.TestClient
-  alias OrangeCheckr.TestRelayRouter
+  alias OrangeCheckr.TestRelay
 
   @proxy_port Application.compile_env(:orangecheckr, :proxy_port)
   @proxy_url "http://localhost:#{@proxy_port}"
@@ -13,13 +13,13 @@ defmodule Orangecheckr.ConnectivityIssuesTest do
     {:ok, _} = Registry.register(OrangeCheckr.TestRegistry, :test, self())
 
     Bandit.start_link(
-      plug: TestRelayRouter,
+      plug: TestRelay.Router,
       port: 0,
       thousand_island_options: [supervisor_options: [name: server_name]]
     )
 
     Application.stop(:orangecheckr)
-    Application.put_env(:orangecheckr, :relay_uri, TestRelayRouter.url(server_name))
+    Application.put_env(:orangecheckr, :relay_uri, TestRelay.Router.url(server_name))
     Application.ensure_started(:orangecheckr)
     {:ok, client} = TestClient.start(@proxy_url)
 
