@@ -3,7 +3,7 @@ defmodule OrangeCheckr.ProxyClient do
   alias Orangecheckr.Utils
   require Logger
 
-  @type frame :: Mint.WebSocket.frame() | Mint.WebSocket.short_hand_frame()
+  @type frame :: Mint.WebSocket.frame() | Mint.WebSocket.shorthand_frame()
 
   @type t :: %__MODULE__{
           conn: Mint.HTTP.t(),
