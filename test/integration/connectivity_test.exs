@@ -71,7 +71,12 @@ defmodule Orangecheckr.ConnectivityTest do
   test "client authenticates", %{client: client} do
     {:ok, message} = TestClient.authenticate(client)
 
-    assert message == ~s(["NOTICE", "Authenticated"])
+    decoded_message = Jason.decode!(message)
+
+    assert length(decoded_message) == 4
+    assert Enum.at(decoded_message, 0) == "OK"
+    assert Enum.at(decoded_message, 2) == true
+    assert Enum.at(decoded_message, 3) == ""
   end
 
   test "client pings the relay", %{client: client} do

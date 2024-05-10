@@ -5,6 +5,7 @@ defmodule OrangeCheckr.Router do
   alias OrangeCheckr.Types
 
   @proxy_path Application.compile_env(:orangecheckr, :proxy_path, "/")
+  @favicon_path Application.compile_env(:orangecheckr, :favicon_path, "/favicon.ico")
 
   @spec init(any()) :: Types.relay_uri()
   def init(_options) do
@@ -23,6 +24,25 @@ defmodule OrangeCheckr.Router do
 
       _ ->
         handle_http(conn, uri)
+    end
+  end
+
+  def call(%{request_path: @favicon_path} = conn, uri) do
+    http_scheme = Utils.ws_to_http_scheme(uri.scheme)
+
+    http_url =
+      "#{http_scheme}://#{uri.host}:#{uri.port}#{conn.request_path}"
+
+    case HTTPoison.get(http_url, conn.req_headers) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, _} ->
+        {:ok, file} = File.read("assets/favicon.ico")
+        send_resp(conn, 200, file)
+
+      {:error, _} ->
+        send_resp(conn, 502, "Bad Gateway")
     end
   end
 

@@ -15,6 +15,7 @@ defmodule OrangeCheckr.ProxyServer do
   @max_retries 7
   @bad_gateway_code 1014
   @closing_relay_connection_timeout 100
+  @proxy_host Application.compile_env(:orangecheckr, :proxy_host, "localhost")
 
   @spec init(Types.relay_uri()) ::
           {:push, {:text, String.t()}, ProxyClient.t()}
@@ -51,19 +52,37 @@ defmodule OrangeCheckr.ProxyServer do
     with {:ok, ["AUTH", raw_event]} <- Jason.decode(text),
          auth_event <- NostrBasics.Event.decode(raw_event),
          true <- authenticate(auth_event, state) do
-      {:push, {:text, ~s(["NOTICE", "Authenticated"])}, put_in(state.auth?, true)}
+      {:push, {:text, ~s(["OK", "#{auth_event.id}", true, ""])}, put_in(state.auth?, true)}
     else
       {:error, _} ->
         {:push, {:text, ~s(["NOTICE", "Invalid event JSON"])}, state}
 
       false ->
-        {:push, {:text, ~s(["NOTICE", "restricted: authentication failed"])}, state}
+        {:push, {:text, ~s(["NOTICE", "auth-required: authentication failed"])}, state}
 
       _ ->
-        {:push,
-         {:text,
-          ~s(["NOTICE", "restricted: we can't serve unauthenticated users, does your client implement NIP-42?"])},
-         state}
+        message = Jason.decode(text)
+
+        case message do
+          {:ok, ["REQ", id | _]} ->
+            {:push,
+             {:text,
+              ~s(["CLOSED", "#{id}", "auth-required: we can't serve unauthenticated users"])},
+             state}
+
+          {:ok, ["EVENT", raw_event]} ->
+            event = NostrBasics.Event.decode(raw_event)
+
+            {:push,
+             {:text,
+              ~s(["OK", "#{event.id}", false, "auth-required: we only accept events from registered users"])},
+             state}
+
+          _ ->
+            {:push,
+             {:text, ~s(["NOTICE", "auth-required: we can't serve unauthenticated users"])},
+             state}
+        end
     end
   end
 
@@ -116,14 +135,13 @@ defmodule OrangeCheckr.ProxyServer do
 
   defp authenticate(%Event{} = event, state) do
     challenge = state.challenge
-    host = state.relay_uri.host
 
     with :ok <- NostrBasics.Event.Validator.validate_event(event),
          22242 <- event.kind,
          true <- DateTime.diff(event.created_at, DateTime.utc_now()) |> abs < 10 * 60,
          [_, ^challenge] <- Enum.find(event.tags, fn [tag | _] -> tag == "challenge" end),
          [_, relay_url] <- Enum.find(event.tags, fn [tag | _] -> tag == "relay" end),
-         %{host: ^host} <- URI.parse(relay_url) do
+         %{host: @proxy_host} <- URI.parse(relay_url) do
       true
     else
       _ -> false

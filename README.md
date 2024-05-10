@@ -1,6 +1,6 @@
 # Orangecheckr
 
-A reverse proxy for Nostr relays that asks for sats as collateral to incentivize adherence to its posting policy
+A reverse proxy for Nostr relays that requires sats as collateral to disencourage violations of its posting policy
 
 ## Installation
 
