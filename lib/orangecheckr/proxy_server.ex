@@ -1,15 +1,17 @@
 defmodule OrangeCheckr.ProxyServer do
   alias OrangeCheckr.Types
   alias NostrBasics.Event
+  alias OrangeCheckr.Bot
   alias OrangeCheckr.ProxyClient
 
-  defstruct [:relay_uri, :client, :auth?, :challenge]
+  defstruct [:relay_uri, :client, :challenge, :pubkey, :collateral?]
 
   @type t :: %__MODULE__{
           relay_uri: Types.relay_uri(),
           client: ProxyClient.t(),
-          auth?: boolean(),
-          challenge: String.t()
+          challenge: String.t(),
+          pubkey: <<_::256>> | nil,
+          collateral?: boolean()
         }
 
   @max_retries 7
@@ -21,11 +23,12 @@ defmodule OrangeCheckr.ProxyServer do
           {:push, {:text, String.t()}, ProxyClient.t()}
           | {:ok, t()}
           | {:stop, term(), integer(), t()}
-  def init(relay_uri) do
+  def init(uri) do
     state = %__MODULE__{
-      relay_uri: relay_uri,
-      auth?: false,
-      challenge: UUID.uuid4()
+      relay_uri: uri,
+      challenge: UUID.uuid4(),
+      pubkey: nil,
+      collateral?: false
     }
 
     connect_to_relay(state)
@@ -42,17 +45,19 @@ defmodule OrangeCheckr.ProxyServer do
     end
   end
 
-  defp maybe_send_authentication_message(%__MODULE__{auth?: false} = state) do
+  defp maybe_send_authentication_message(%__MODULE__{pubkey: nil} = state) do
     {:push, {:text, ~s(["AUTH", "#{state.challenge}"])}, state}
   end
 
   defp maybe_send_authentication_message(state), do: {:ok, state}
 
-  def handle_in({text, [opcode: :text]}, %{auth?: false} = state) do
+  def handle_in({text, [opcode: :text]}, %{pubkey: nil} = state) do
     with {:ok, ["AUTH", raw_event]} <- Jason.decode(text),
          auth_event <- NostrBasics.Event.decode(raw_event),
          true <- authenticate(auth_event, state) do
-      {:push, {:text, ~s(["OK", "#{auth_event.id}", true, ""])}, put_in(state.auth?, true)}
+      pubkey = auth_event.pubkey
+      Bot.ask_for_collateral(pubkey)
+      {:push, {:text, ~s(["OK", "#{auth_event.id}", true, ""])}, put_in(state.pubkey, pubkey)}
     else
       {:error, _} ->
         {:push, {:text, ~s(["NOTICE", "Invalid event JSON"])}, state}
@@ -86,7 +91,7 @@ defmodule OrangeCheckr.ProxyServer do
     end
   end
 
-  def handle_in({text, [opcode: :text]}, %{auth?: true} = state) do
+  def handle_in({text, [opcode: :text]}, state) do
     try_send({:text, text}, state)
   end
 
@@ -95,8 +100,8 @@ defmodule OrangeCheckr.ProxyServer do
     {:ok, state}
   end
 
-  def handle_info({:retry_send, frame}, state) do
-    try_send(frame, state)
+  def handle_info({:retry_send, frame, attempt}, state) do
+    try_send(frame, state, attempt + 1)
   end
 
   def handle_info(message, state) do
@@ -124,7 +129,7 @@ defmodule OrangeCheckr.ProxyServer do
   end
 
   defp try_send(frame, %__MODULE__{client: %{websocket: nil}} = state, attempt) do
-    Process.send_after(self(), {:retry_send, frame}, 10 * 2 ** attempt)
+    Process.send_after(self(), {:retry_send, frame, attempt}, 10 * 2 ** attempt)
     {:ok, state}
   end
 

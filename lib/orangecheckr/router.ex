@@ -2,22 +2,13 @@ defmodule OrangeCheckr.Router do
   import Plug.Conn
   alias Orangecheckr.Utils
   alias OrangeCheckr.ProxyServer
-  alias OrangeCheckr.Types
 
-  @proxy_path Application.compile_env(:orangecheckr, :proxy_path, "/")
-  @favicon_path Application.compile_env(:orangecheckr, :favicon_path, "/favicon.ico")
-
-  @spec init(any()) :: Types.relay_uri()
-  def init(_options) do
-    Application.get_env(:orangecheckr, :relay_uri)
-    |> URI.parse()
-    |> Map.from_struct()
-    |> Map.drop([:authority, :query, :fragment, :userinfo])
-    |> Map.update(:scheme, :wss, &String.to_atom/1)
-    |> Map.update(:path, "/", fn path -> path || "/" end)
+  def init(opts) do
+    opts
   end
 
-  def call(%{request_path: @proxy_path} = conn, uri) do
+  def call(%{request_path: request_path} = conn, %{uri: uri, proxy_path: proxy_path})
+      when request_path == proxy_path do
     case get_req_header(conn, "upgrade") do
       ["websocket" | _] ->
         upgrade(conn, uri)
@@ -27,7 +18,8 @@ defmodule OrangeCheckr.Router do
     end
   end
 
-  def call(%{request_path: @favicon_path} = conn, uri) do
+  def call(%{request_path: request_path} = conn, %{uri: uri, favicon_path: favicon_path})
+      when request_path == favicon_path do
     http_scheme = Utils.ws_to_http_scheme(uri.scheme)
 
     http_url =
@@ -46,8 +38,8 @@ defmodule OrangeCheckr.Router do
     end
   end
 
-  def call(conn, _) do
-    send_resp(conn, 404, "Not found. Relay path is #{@proxy_path}")
+  def call(conn, %{proxy_path: proxy_path}) do
+    send_resp(conn, 404, "Not found. Relay path is #{proxy_path}")
   end
 
   defp upgrade(conn, uri) do

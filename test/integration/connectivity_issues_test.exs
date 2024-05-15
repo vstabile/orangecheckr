@@ -23,6 +23,11 @@ defmodule Orangecheckr.ConnectivityIssuesTest do
     Application.ensure_started(:orangecheckr)
     {:ok, client} = TestClient.start(@proxy_url)
 
+    # Ignore the relay connection with the bot
+    receive do
+      {:relay_connected, relay} -> relay
+    end
+
     relay =
       receive do
         {:relay_connected, relay} -> relay

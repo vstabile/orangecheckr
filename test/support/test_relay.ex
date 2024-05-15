@@ -70,9 +70,9 @@ defmodule TestRelay.Server do
         response = File.read!("test/fixtures/subscription_response.json")
         {:push, {:text, response}, state}
 
-      {:ok, ["EVENT", %{id: event_id}]} ->
-        ["OK", event_id, true, ""]
-        {:ok, state}
+      {:ok, ["EVENT", %{"id" => event_id}]} ->
+        response = Jason.encode!(["OK", event_id, true, ""])
+        {:push, {:text, response}, state}
 
       {:ok, ["CLOSE", _]} ->
         {:ok, state}
